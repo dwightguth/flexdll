@@ -567,6 +567,17 @@ let build_dll link_exe output_file files exts extra_args =
   let objs = collect (function (f, `Obj x) -> Some (f,x) | _ -> None) files in
   let libs = collect (function (f, `Lib (x,_)) -> Some (f,x) | _ -> None) files in
 
+  let with_data_symbol symbols sym_name f =
+    if !toolchain <> `MSVC && !toolchain <> `MSVC64 then
+      match check_prefix "__nm_" sym_name with
+      | None -> ()
+      | Some s ->
+        let imp_name = "__imp_" ^ s in
+        if List.exists ( fun p -> Symbol.is_defin p &&
+          p.sym_name = imp_name) symbols then
+          f s;
+  in
+
   (* Collect all the available symbols, including those defined
      in default libraries *)
   let defined, from_imports, unalias =
@@ -613,7 +624,12 @@ let build_dll link_exe output_file files exts extra_args =
 
       (* Collect defined symbols *)
       List.iter
-        (fun sym -> if Symbol.is_defin sym then add_def sym.sym_name)
+        (fun sym -> 
+          if Symbol.is_defin sym then (
+            add_def sym.sym_name;
+            with_data_symbol obj.symbols sym.sym_name add_def;
+          )
+        )
         obj.symbols
 
     and collect_file fn =
@@ -663,12 +679,14 @@ let build_dll link_exe output_file files exts extra_args =
     let def_in_obj fn (objname, obj) =
       List.iter
         (fun sym ->
-           if Symbol.is_defin sym
-           then begin
-             if !explain then
-               Printf.printf "Symbol %s found in %s(%s)\n%!" sym.sym_name fn
-                 objname;
-             Hashtbl.replace defined_in sym.sym_name (fn, objname, obj);
+           if Symbol.is_defin sym then begin
+             let f s = 
+               if !explain then
+                 Printf.printf "Symbol %s found in %s(%s)\n%!" s fn objname;
+               Hashtbl.replace defined_in s (fn, objname, obj);
+             in
+             f sym.sym_name;
+             with_data_symbol obj.symbols sym.sym_name f;
            end
         )
         obj.symbols
